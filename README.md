@@ -242,7 +242,101 @@ Sistem, provider bazında rate limiting uygular:
 - Provider'a özgü TPS limitleri
 - Dinamik rate limit ayarları
 
-## 🔗 API Kullanımı
+## 🔗 API Kullanımı ve Routing Yapısı
+
+### API Mimarisi
+
+SMS Gateway sistemi, modüler bir routing yapısına sahiptir:
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   PUBLIC API    │    │   ADMIN API     │    │   STATIC API    │
+│                 │    │                 │    │                 │
+│ • OAuth Token   │    │ • JWT Protected │    │ • Static Pages  │
+│ • Health Check  │    │ • Customer Data │    │ • File Download │
+│ • File Download │    │ • SMS Operations│    │ • Documentation │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Routing Kategorileri
+
+#### 1. **SMS ve Kampanya Yönetimi**
+- **SMS Campaigns** (`/smsCampaigns`) - Kampanya CRUD işlemleri
+- **SMS Packages** (`/smsPackages`) - SMS paket yönetimi
+- **SMS Messages** (`/smsMessages`) - Mesaj takibi
+- **Ready Messages** (`/readyMessage`) - Hazır mesaj şablonları
+
+#### 2. **Kişi ve İletişim Yönetimi**
+- **Contacts** (`/contacts`) - Kişi yönetimi
+- **Contact Groups** (`/contactGroups`) - Grup yönetimi
+- **Contact Files** (`/contactFiles`) - Dosya import/export
+- **Blacklist** (`/blacklist`) - Kara liste yönetimi
+
+#### 3. **Müşteri ve Kullanıcı Yönetimi**
+- **Customers** (`/customers`) - Müşteri yönetimi
+- **Users** (`/users`) - Kullanıcı yönetimi
+- **User Roles** (`/userRole`) - Rol yönetimi
+- **Customer DID** (`/customerDid`) - Sender ID yönetimi
+
+#### 4. **Gateway ve Network Yönetimi**
+- **Gateways** (`/gateways`) - SMPP provider yönetimi
+- **Gateway Network** (`/gatewayNetwork`) - Ağ konfigürasyonu
+- **Mobile Networks** (`/mobileNetworks`) - Operatör yönetimi
+- **Routing Groups** (`/routingGroups`) - Yönlendirme kuralları
+
+#### 5. **Sistem Yönetimi**
+- **Settings** (`/settings`) - Sistem ayarları
+- **Modules** (`/modules`) - Modül yönetimi
+- **Vendors** (`/vendors`) - Tedarikçi yönetimi
+- **Static Pages** (`/staticPage`) - İçerik yönetimi
+
+### API Endpoint Yapısı
+
+Her route dosyası otomatik olarak oluşturulur ve şu pattern'leri takip eder:
+
+```go
+// CRUD Operations
+GET    /api/admin/{CustomerUUID}/{resource}/                    // List
+GET    /api/admin/{CustomerUUID}/{resource}/{Resource}-new      // New Form
+GET    /api/admin/{CustomerUUID}/{resource}/{Resource}-{UUID}   // View
+POST   /api/admin/{CustomerUUID}/{resource}/{Resource}-new/save/ // Create
+POST   /api/admin/{CustomerUUID}/{resource}/{Resource}-{UUID}/save/ // Update
+POST   /api/admin/{CustomerUUID}/{resource}/{UUID}/remove       // Delete
+
+// API Operations (RESTful)
+GET    /api/admin/{CustomerUUID}/{resource}/get/{UUID}/         // API Get
+POST   /api/admin/{CustomerUUID}/{resource}/list/               // API List
+POST   /api/admin/{CustomerUUID}/{resource}/insert/             // API Insert
+POST   /api/admin/{CustomerUUID}/{resource}/update/             // API Update
+DELETE /api/admin/{CustomerUUID}/{resource}/delete/             // API Delete
+
+// Utility Operations
+POST   /api/admin/{CustomerUUID}/{resource}/multiSelectSearch   // Search
+GET    /api/admin/{CustomerUUID}/{resource}/File/title/{type}   // Export Title
+POST   /api/admin/{CustomerUUID}/{resource}/File/export         // Export
+POST   /api/admin/{CustomerUUID}/{resource}/File/import         // Import
+```
+
+### Middleware Katmanları
+
+```go
+// Middleware Pipeline
+┌─────────────────────┐
+│   Settings          │ ← Genel sistem ayarları
+├─────────────────────┤
+│   Bearer Check      │ ← Authorization header kontrolü
+├─────────────────────┤
+│   JWT Verification  │ ← Token doğrulama
+├─────────────────────┤
+│   Auth Middleware   │ ← Kullanıcı bilgileri çıkarma
+├─────────────────────┤
+│   Role Check        │ ← Admin/User rol kontrolü
+├─────────────────────┤
+│   License Check     │ ← Lisans özellik kontrolü
+├─────────────────────┤
+│   API Rate Limit    │ ← Token bucket rate limiting
+└─────────────────────┘
+```
 
 ### Kimlik Doğrulama
 
@@ -255,6 +349,48 @@ curl -X POST "https://api.smsc.tr/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials"
 ```
+
+### Özel SMS Endpoint'leri
+
+SMS Gateway'de özel SMS işlemleri için ayrı endpoint'ler mevcuttur:
+
+```bash
+# SMS Gönderim Endpoint'leri
+POST /api/admin/{CustomerUUID}/smsCampaigns/otp/      # OTP SMS
+POST /api/admin/{CustomerUUID}/smsCampaigns/preview/  # Preview Mode
+POST /api/admin/{CustomerUUID}/smsCampaigns/          # Kampanya SMS
+
+# SMS Yönetim Endpoint'leri
+POST /api/admin/{CustomerUUID}/SMS/SmsCampaign-{UUID}/saveSchedule   # Zamanlama
+POST /api/admin/{CustomerUUID}/SMS/SmsCampaign-{UUID}/saveDisabled   # Pasifleştirme
+POST /api/admin/{CustomerUUID}/SMS/SmsCampaign-{UUID}/limit          # Limit Ayarlama
+```
+
+### Middleware Güvenlik Kontrolleri
+
+#### Role-Based Access Control (RBAC)
+```go
+// Admin işlemleri için
+middleware.RoleCheckAdmin("Admin", "List")     // Admin List yetkisi
+middleware.RoleCheckAdmin("Admin", "Add")      // Admin Add yetkisi
+
+// User işlemleri için  
+middleware.RoleCheckUser("SmsCampaigns", "List")  // SMS Kampanya List yetkisi
+middleware.RoleCheckUser("ContactControl", "Add") // Kişi Ekleme yetkisi
+```
+
+#### License-Based Feature Control
+```go
+middleware.LicenseCheck("Api")              // API özelliği kontrolü
+middleware.LicenseCheck("BtkCdrReports")    // BTK CDR rapor özelliği
+middleware.LicenseCheck("ExportReports")    // Export özelliği
+```
+
+#### IP Whitelist ve Subnet Kontrolü
+- JWT token'da tanımlı subnet'ler
+- Veritabanındaki IP whitelist
+- CIDR notation desteği
+- Real-time IP validation
 
 ### SMS Gönderimi
 
@@ -563,11 +699,56 @@ curl http://localhost:8053/api/projects/sms-gateway/customers
 
 ## 📝 Geliştirme Notları
 
+### Route Otomasyonu
+
+#### Otomatik Route Üretimi
+Sistemdeki tüm route dosyaları otomatik olarak üretilir:
+
+```bash
+# Route dosyaları otomatik üretimi
+⚠️ BU DOSYA OTOMATİK OLARAK OLUŞTURULMUŞTUR.
+❗ Lütfen manuel değişiklik yapmayın, müdahale etmeyin.
+
+# Route listesi güncelleme
+http://127.0.0.1:8080/aktar/routesList.php
+```
+
+#### Route Registry Sistemi
+`router/routesList.go` dosyası tüm route'ları merkezi olarak yönetir:
+
+```go
+func RoutesList(admin fiber.Router) {
+    routes.AnnouncementTranslationsRoutes(admin)
+    routes.AnnouncementsRoutes(admin)
+    routes.BlacklistRoutes(admin)
+    // ... 35+ otomatik route
+}
+```
+
+### API Rate Limiting
+
+#### Token Bucket Algoritması
+```go
+// CustomAPILimitMiddleware - Redis tabanlı rate limiting
+func CustomAPILimitMiddleware(rdb *redis.Client) fiber.Handler {
+    // Müşteri bazlı limit kontrolü
+    // IP bazlı token bucket
+    // Dinamik refill rate
+}
+```
+
+#### Rate Limit Seviyeleri
+- **Admin Users**: Limitsiz erişim
+- **Customer Users**: Müşteri bazlı limitler
+- **API Users**: Token bucket rate limiting
+- **IP Based**: IP bazlı ek koruma
+
 ### Kod Standartları
 - Go fmt kullanılmalı
 - Swagger annotationları güncel tutulmalı
 - Error handling best practices uygulanmalı
 - Unit testler yazılmalı
+- Route dosyaları manuel düzenlenmemeli
 
 ### Güvenlik
 - SQL injection koruması (DBR kullanımı)
