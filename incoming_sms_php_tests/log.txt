@@ -1,0 +1,5 @@
+# SMS Gateway Test Logs
+# Bu dosya gelen SMS bildirimlerini loglar
+# Format: JSON
+# Encoding: UTF-8
+
